@@ -15,3 +15,4 @@ for original, new in tests:
     print(f"New:      {new}")
     print(f"Valid:    {result['valid']}")
     print(f"Feedback: {result['feedback']}")
+
