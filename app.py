@@ -2,12 +2,12 @@ from dotenv import load_dotenv
 load_dotenv()
 import streamlit as st
 from sympy import simplify
-from src.math_checker import validate_equation, x
+from src.math_checker import validate_equation, x, validation_feedback
 from src.operation_choices import generate_operation_choices
 from src.operations import apply_operation
 from src.tutor_engine import evaluate_attempt
 from src.hint_engine import hint_text
-from src.llm_tutor import personalised_hint, extract_questions
+from src.llm_tutor import personalised_hint, extract_questions, personalised_validation
 from src.visualisations import equation_tiles, equation_tex, transformation_tex, balance_visual, worked_frames, operation_clue
 import html, random, re, os
 
@@ -49,6 +49,21 @@ def reset():
     s.selected=None;s.op_hints=[];s.removed=[];s.op_history=[];s.frame=0;s.hints=[];s.attempts=[];s.confirm=False;s.reveal=False;s.nonce+=1
 
 def clean(text):return text.strip().replace('−','-').replace('×','*').replace('÷','/')
+def show_validation_feedback(value, original=''):
+    value, original = str(value or ''), str(original or '')
+    heading, fallback = validation_feedback(clean(value), original)
+    # Cache within this session, including failures, to avoid repeated API calls on reruns.
+    cache = s.setdefault('validation_feedback_cache', {})
+    key = (value, original, heading, fallback)
+    if key not in cache:
+        if len(cache) >= 100: cache.clear()
+        with st.spinner('Preparing feedback...'):
+            cache[key] = personalised_validation(value, original, heading, fallback)
+    ai = cache[key]
+    message = ai or fallback
+    # One warning, with a verified heading and a single explanation.
+    st.warning(f'**{heading}**\n\n{message}\n\n' + ('*AI guidance*' if ai else '*Built-in guidance*'))
+
 def start(text):
     validate_equation(text);s.steps=[text];s.operations=[];s.revealed=[];reset();s.page='solve'
 
@@ -88,17 +103,19 @@ if s.page=='home':
         try:
             direct = simple_question(text) if not photo else None
             if direct:
-                validate_equation(direct)
                 qs=[dict(label='1',text=text,equation=direct,uncertain=False)]
             else:
                 with st.spinner('Reading your questions...'):
                     qs=extract_questions(text,photo)
             if not qs:
-                st.warning('No equations were found. Check the question or upload a clearer photo.')
+                if photo: st.warning('No equations were found. Upload a clearer photo.')
+                else: show_validation_feedback('', text)
             else:
-                s.questions=qs;s.completed=[];s.nonce+=1;s.resume_page=None;s.steps=[]
+                s.questions=qs;s.question_source='photo' if photo else 'typed';s.completed=[];s.nonce+=1;s.resume_page=None;s.steps=[]
                 if direct:
-                    s.active=0;start(direct)
+                    try: validate_equation(direct)
+                    except Exception: s.page='review'
+                    else: s.active=0;start(direct)
                 else:
                     s.page='review'
                 st.rerun()
@@ -122,13 +139,16 @@ elif s.page=='review':
     if st.button('Enter new questions',icon=':material/arrow_back:'):s.page='home';st.rerun()
     for i,q in enumerate(s.questions):
         with st.container(border=True):
-            st.write(f'Question {q.get("label",i+1)}'+(' — completed' if i in s.completed else ''))
+            st.write(f'Question {i+1}'+(' — completed' if i in s.completed else ''))
             st.write(str(q.get('text','')))
-            if q.get('uncertain'):st.warning('Please check this reading carefully.')
+            if s.get('question_source') == 'photo' and q.get('uncertain'):
+                st.warning('Please check this reading carefully against your photo.')
             val=st.text_input('Equation',value=str(q.get('equation','') or ''),key=f'q_{s.nonce}_{i}')
             q['equation']=val
             try:validate_equation(clean(val));ok=True
-            except Exception:ok=False;st.caption('Check the equation. Currently, only simple linear equations using x are supported.')
+            except Exception:
+                ok=False
+                show_validation_feedback(val, str(q.get('text','')) if not val.strip() else '')
             resume=bool(s.steps and s.get('active')==i and clean(val)==s.steps[0])
             if st.button('Resume this question' if resume else 'Practise this question',key=f'go_{i}',disabled=not ok,type='primary'):
                 if resume:s.page='solve'

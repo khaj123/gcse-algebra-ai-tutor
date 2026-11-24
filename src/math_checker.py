@@ -76,3 +76,25 @@ def check_equation_step(original_text, new_text):
         }
     except Exception as error:
         return {'valid': False, 'feedback': f'Could not check this step: {error}'}
+
+
+def validation_feedback(equation, original=''):
+    """Explain a rejected input; never determine whether practice is allowed."""
+    import re
+    text = (equation or original or '').strip()
+    if not text or not re.search(r'[0-9=+*/²^]|\bx\b', text):
+        return 'No equation detected', 'Enter a linear equation such as 2x + 3 = 11.'
+    if '=' not in text:
+        return 'Missing equals sign', 'An equation needs two sides separated by =. Check what your expression is equal to.'
+    if text.count('=') != 1:
+        return 'Too many equals signs', 'Enter one equation with exactly one equals sign.'
+    left, right = text.split('=')
+    if not left.strip() or not right.strip() or any(re.search(r'[+*/-]\s*$', side) for side in (left,right)):
+        return 'Incomplete equation', 'Check for a missing number or term on either side of the equals sign.'
+    if re.search(r'x\s*(?:²|\^\s*2|\*\*\s*2)(?!\d)', text):
+        return 'Quadratic term detected', 'Your input contains x squared. AlgebraStep supports linear equations only.'
+    if re.search(r'[a-wyzA-WYZ]', text):
+        return 'Unsupported variable or text', 'AlgebraStep currently supports equations using x only. Check the variable and remove any extra words from the equation box.'
+    if 'x' in right:
+        return 'Variable on the right-hand side', 'AlgebraStep currently requires x on the left-hand side only.'
+    return 'Check your equation', 'Enter a simple linear equation using x, numbers and arithmetic operations, such as 2x + 3 = 11.'
